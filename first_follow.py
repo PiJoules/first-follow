@@ -51,7 +51,7 @@ class Parser:
                 all_have_empty = True
                 for i in xrange(len(prod) - 1):
                     if EMPTY in self.firsts(prod[i]):
-                        firsts_set |= self.firsts(prod[i+1])
+                        firsts_set |= self.firsts(prod[i+1]) - {EMPTY}
                     else:
                         all_have_empty = False
                 if all_have_empty and EMPTY in self.firsts(prod[-1]):
@@ -97,7 +97,7 @@ class Parser:
         for rule, prod in self.__rules:
             for i in xrange(len(prod)-1):
                 if prod[i] == symbol:
-                    follows_set |= self.firsts(prod[i+1])
+                    follows_set |= self.firsts(prod[i+1]) - {EMPTY}
                     if EMPTY in self.firsts(prod[i+1]):
                         follows_set |= self.follows(rule)
             if prod[-1] == symbol:
