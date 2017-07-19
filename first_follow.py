@@ -17,116 +17,114 @@ class Parser:
         self.__nonterminals = {r[0] for r in rules}
         self.__start_nonterminal = rules[0][0]
 
-        # for keeping track of recusive calls
-        self.__firsts_stack = set()
-        self.__follows_stack = set()
-
         # memoization
-        self.__firsts_dict = {}
-        self.__follows_dict = {}
+        self.__firsts_dict = self.__make_firsts()
+        self.__follows_dict = self.__make_follows()
 
-        self.__init_firsts()
-        self.__init_follows()
+    def __make_firsts(self):
+        firsts_dict = {}
+        firsts_stack = set()
 
-    def __init_firsts(self):
         for token in self.__tokens:
-            self.__firsts_dict[token] = self.__find_firsts(token)
+            firsts_dict[token] = self.__memoized_firsts(token, firsts_dict, firsts_stack)
+            assert not firsts_stack
 
         for rule, _ in self.__rules:
-            self.__firsts_dict[rule] = self.__find_firsts(rule)
+            firsts_dict[rule] = self.__memoized_firsts(rule, firsts_dict, firsts_stack)
+            assert not firsts_stack
 
-    def __init_follows(self):
+        return firsts_dict
+
+    def __make_follows(self):
+        follows_dict = {}
+        follows_stack = set()
+
         # Only rules are in the follows dict
         for rule, _ in self.__rules:
-            self.__follows_dict[rule] = self.__find_follows(rule)
+            follows_dict[rule] = self.__memoized_follows(rule, follows_dict, follows_stack)
+            assert not follows_stack
 
-    def firsts_stack(self):
-        return self.__firsts_stack
-
-    def follows_stack(self):
-        return self.__follows_stack
+        return follows_dict
 
     def is_terminal(self, symbol):
         return symbol in self.__tokens
 
-    def is_non_terminal(self, symbol):
-        return not self.is_terminal(symbol)
-
-    def __construct_nonterminal_firsts(self, symbol):
-        assert self.is_non_terminal(symbol)
-
-        firsts_set = set()
-        for rule, prod in self.__rules:
-            if rule == symbol:
-                # For each production that mapped to rule X
-
-                # Put firsts(Y1) - {e} into firsts(X)
-                firsts_set |= self.__find_firsts(prod[0]) - {EMPTY}
-
-                # Check for epsilon in each symbol in the prod
-                all_have_empty = True
-                for i in xrange(len(prod) - 1):
-                    if EMPTY in self.__find_firsts(prod[i]):
-                        firsts_set |= self.__find_firsts(prod[i+1]) - {EMPTY}
-                    else:
-                        all_have_empty = False
-                if all_have_empty and EMPTY in self.__find_firsts(prod[-1]):
-                    firsts_set.add(EMPTY)
-
-        return firsts_set
-
     def firsts(self, symbol):
         return self.__firsts_dict[symbol]
 
-    def __find_firsts(self, symbol):
+    def __memoized_firsts(self, symbol, firsts_dict, firsts_stack):
         assert isinstance(symbol, basestring)
 
-        if symbol in self.__firsts_dict:
-            return self.__firsts_dict[symbol]
+        # Already set
+        if symbol in firsts_dict:
+            return firsts_dict[symbol]
+
+        firsts_set = set()
 
         if self.is_terminal(symbol) or symbol == EMPTY:
-            self.__firsts_dict[symbol] = {symbol}
-            return self.__firsts_dict[symbol]
+            firsts_set = {symbol}
         else:
-            if symbol not in self.__firsts_stack:
-                self.__firsts_stack.add(symbol)
-                firsts = self.__construct_nonterminal_firsts(symbol)
-                self.__firsts_dict[symbol] = firsts
-                self.__firsts_stack.remove(symbol)
-                return self.__firsts_dict[symbol]
-            else:
-                return set()
+            if symbol not in firsts_stack:
+                firsts_stack.add(symbol)
+
+                # Construct the firsts set for the nonterminal
+                for rule, prod in self.__rules:
+                    if rule == symbol:
+                        # For each production that mapped to rule X
+
+                        # Put firsts(Y1) - {e} into firsts(X)
+                        firsts_set |= self.__memoized_firsts(prod[0], firsts_dict, firsts_stack) - {EMPTY}
+
+                        # Check for epsilon in each symbol in the prod
+                        all_have_empty = True
+                        prev_firsts = set(firsts_set)
+                        for i in xrange(len(prod) - 1):
+                            if EMPTY in prev_firsts:
+                                prev_firsts = self.__memoized_firsts(prod[i+1], firsts_dict, firsts_stack) - {EMPTY}
+                                firsts_set |= prev_firsts
+                            else:
+                                all_have_empty = False
+
+                        if all_have_empty and EMPTY in self.__memoized_firsts(prod[-1], firsts_dict, firsts_stack):
+                            firsts_set.add(EMPTY)
+
+                firsts_stack.remove(symbol)
+
+        # Memoize for recursive calls
+        firsts_dict[symbol] = firsts_set
+
+        return firsts_set
 
     def follows(self, symbol):
         return self.__follows_dict[symbol]
 
-    def __find_follows(self, symbol):
+    def __memoized_follows(self, symbol, follows_dict, follows_stack):
         assert isinstance(symbol, basestring)
 
-        if symbol in self.__follows_dict:
-            return self.__follows_dict[symbol]
-
-        if symbol in self.__follows_stack:
-            return set()
-
-        self.__follows_stack.add(symbol)
+        # Already in follows dict
+        if symbol in follows_dict:
+            return follows_dict[symbol]
 
         follows_set = set()
-        if symbol == self.__start_nonterminal:
-            follows_set.add(END)
 
-        # Find the productions with A on the RHS
-        for rule, prod in self.__rules:
-            for i in xrange(len(prod)-1):
-                if prod[i] == symbol:
-                    follows_set |= self.__find_firsts(prod[i+1]) - {EMPTY}
-                    if EMPTY in self.__find_firsts(prod[i+1]):
-                        follows_set |= self.__find_follows(rule)
-            if prod[-1] == symbol:
-                follows_set |= self.__find_follows(rule)
+        if symbol not in follows_stack:
+            follows_stack.add(symbol)
 
-        self.__follows_dict[symbol] = follows_set
-        self.__follows_stack.remove(symbol)
+            if symbol == self.__start_nonterminal:
+                follows_set.add(END)
+
+            # Find the productions with A on the RHS
+            for rule, prod in self.__rules:
+                for i in xrange(len(prod)-1):
+                    if prod[i] == symbol:
+                        follows_set |= self.firsts(prod[i+1]) - {EMPTY}
+                        if EMPTY in self.firsts(prod[i+1]):
+                            follows_set |= self.__memoized_follows(rule, follows_dict, follows_stack)
+                if prod[-1] == symbol:
+                    follows_set |= self.__memoized_follows(rule, follows_dict, follows_stack)
+
+            follows_dict[symbol] = follows_set
+            follows_stack.remove(symbol)
 
         return follows_set
 
@@ -158,10 +156,6 @@ def test_rules():
     assert parser.follows("C") == {"d"}
     assert parser.follows("D") == {"a"}
 
-    # Empty stacks
-    assert not parser.firsts_stack()
-    assert not parser.follows_stack()
-
 
 def test_rules2():
     # From
@@ -187,10 +181,6 @@ def test_rules2():
     assert parser.follows("E") == {END, ")"}
     assert parser.follows("T") == {END, ")", "+"}
 
-    # Empty stacks
-    assert not parser.firsts_stack()
-    assert not parser.follows_stack()
-
 
 def test_rules3():
     # From
@@ -212,10 +202,6 @@ def test_rules3():
     # follows
     assert parser.follows("E") == {"$", "+", ")"}
     assert parser.follows("T") == parser.follows("F") == {"$", "+", ")", "*"}
-
-    # Empty stacks
-    assert not parser.firsts_stack()
-    assert not parser.follows_stack()
 
 
 def test_rules4():
@@ -239,10 +225,6 @@ def test_rules4():
     assert parser.follows("expr") == {"ADD", "SUB", "MUL", "DIV", END}
     assert parser.follows("module") == {END}
 
-    # Empty stacks
-    assert not parser.firsts_stack()
-    assert not parser.follows_stack()
-
 
 def test_rules5():
     # Using epsilon
@@ -260,10 +242,6 @@ def test_rules5():
     # follows
     assert parser.follows("X") == {END}
     assert parser.follows("S") == {END}
-
-    # Empty stacks
-    assert not parser.firsts_stack()
-    assert not parser.follows_stack()
 
 
 test_rules()
